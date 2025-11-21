@@ -1,0 +1,761 @@
+{
+  "name": "Bitrix24 Call Transcription & Analysis",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "webhook/call-bitrix-incoming",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Bitrix24",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "bitrix24-call-webhook"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "call_id",
+              "name": "call_id",
+              "value": "={{ $json.data.CALL_ID }}",
+              "type": "string"
+            },
+            {
+              "id": "recording_url",
+              "name": "recording_url",
+              "value": "={{ $json.data.RECORD_URL }}",
+              "type": "string"
+            },
+            {
+              "id": "call_duration",
+              "name": "call_duration",
+              "value": "={{ $json.data.CALL_DURATION }}",
+              "type": "number"
+            },
+            {
+              "id": "phone_number",
+              "name": "phone_number",
+              "value": "={{ $json.data.PHONE_NUMBER }}",
+              "type": "string"
+            },
+            {
+              "id": "portal_user_id",
+              "name": "portal_user_id",
+              "value": "={{ $json.data.PORTAL_USER_ID }}",
+              "type": "string"
+            },
+            {
+              "id": "crm_entity_type",
+              "name": "crm_entity_type",
+              "value": "={{ $json.data.CRM_ENTITY_TYPE }}",
+              "type": "string"
+            },
+            {
+              "id": "crm_entity_id",
+              "name": "crm_entity_id",
+              "value": "={{ $json.data.CRM_ENTITY_ID }}",
+              "type": "string"
+            },
+            {
+              "id": "call_type",
+              "name": "call_type",
+              "value": "={{ $json.data.CALL_TYPE }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "parse-webhook-data",
+      "name": "Parse Webhook Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-recording",
+              "leftValue": "={{ $json.recording_url }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            },
+            {
+              "id": "has-duration",
+              "leftValue": "={{ $json.call_duration }}",
+              "rightValue": "5",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-recording-exists",
+      "name": "Check Recording Exists",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.recording_url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "n8n-workflow"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "download-audio",
+      "name": "Download Audio File",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 200],
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "bitrix24_recording_auth",
+          "name": "Bitrix24 Recording Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "headerAuth",
+        "url": "https://api.assemblyai.com/v2/upload",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ $credentials.assemblyaiApi.apiKey }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "audio",
+              "value": "={{ $binary.data }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "upload-to-assemblyai",
+      "name": "Upload to AssemblyAI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 200],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "assemblyai_api",
+          "name": "AssemblyAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "headerAuth",
+        "url": "https://api.assemblyai.com/v2/transcript",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ $credentials.assemblyaiApi.apiKey }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"audio_url\": \"{{ $json.upload_url }}\",\n  \"language_code\": \"ru\",\n  \"speaker_labels\": true,\n  \"punctuate\": true,\n  \"format_text\": true,\n  \"disfluencies\": false,\n  \"sentiment_analysis\": true,\n  \"auto_highlights\": true,\n  \"entity_detection\": true\n}",
+        "options": {}
+      },
+      "id": "start-transcription",
+      "name": "Start Transcription",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 200],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "assemblyai_api",
+          "name": "AssemblyAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 10
+            }
+          ]
+        },
+        "resume": "webhook"
+      },
+      "id": "wait-for-transcription",
+      "name": "Wait for Transcription",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [1560, 200],
+      "webhookId": "wait-transcription-webhook"
+    },
+    {
+      "parameters": {
+        "authentication": "headerAuth",
+        "url": "=https://api.assemblyai.com/v2/transcript/{{ $json.transcript_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ $credentials.assemblyaiApi.apiKey }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "check-transcription-status",
+      "name": "Check Transcription Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1780, 200],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "assemblyai_api",
+          "name": "AssemblyAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-completed",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "completed",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "is-transcription-done",
+      "name": "Is Transcription Done?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2000, 200]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o",
+        "options": {
+          "temperature": 0.3,
+          "maxTokens": 2000
+        },
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "Ты — эксперт-аналитик телефонных разговоров. Проанализируй транскрипт звонка и предоставь структурированный анализ:\n\n1. **Краткое содержание** (2-3 предложения)\n2. **Ключевые темы** (список маркеров)\n3. **Эмоциональный тон** (позитивный/нейтральный/негативный)\n4. **Потребности клиента** (что хочет клиент)\n5. **Action items** (что нужно сделать)\n6. **Качество разговора** (оценка от 1 до 10)\n7. **Рекомендации** (что улучшить)\n\nФормат ответа: JSON с полями: summary, key_topics, sentiment, client_needs, action_items, call_quality_score, recommendations"
+            },
+            {
+              "role": "user",
+              "content": "=Проанализируй этот звонок:\n\nДлительность: {{ $json.audio_duration }} секунд\n\nТранскрипт:\n{{ $json.text }}\n\nУчастники: {{ $json.speakers_expected }}\n\nНастроение: {{ $json.sentiment_analysis_results }}"
+            }
+          ]
+        }
+      },
+      "id": "analyze-with-chatgpt",
+      "name": "Analyze with ChatGPT",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [2220, 100],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai_api",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "final_data",
+              "name": "final_data",
+              "value": "={\n  \"call_id\": \"{{ $('Parse Webhook Data').item.json.call_id }}\",\n  \"phone_number\": \"{{ $('Parse Webhook Data').item.json.phone_number }}\",\n  \"call_duration\": {{ $('Parse Webhook Data').item.json.call_duration }},\n  \"call_type\": \"{{ $('Parse Webhook Data').item.json.call_type }}\",\n  \"recording_url\": \"{{ $('Parse Webhook Data').item.json.recording_url }}\",\n  \"transcript\": \"{{ $json.text }}\",\n  \"transcript_id\": \"{{ $json.id }}\",\n  \"sentiment\": \"{{ $json.sentiment_analysis_results }}\",\n  \"ai_analysis\": {{ $('Analyze with ChatGPT').item.json }},\n  \"crm_entity_type\": \"{{ $('Parse Webhook Data').item.json.crm_entity_type }}\",\n  \"crm_entity_id\": \"{{ $('Parse Webhook Data').item.json.crm_entity_id }}\",\n  \"portal_user_id\": \"{{ $('Parse Webhook Data').item.json.portal_user_id }}\",\n  \"processed_at\": \"{{ $now.toISO() }}\"\n}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "prepare-final-data",
+      "name": "Prepare Final Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [2440, 100]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "tableId": "call_transcriptions",
+        "dataMode": "autoMapInputData",
+        "options": {}
+      },
+      "id": "save-to-supabase",
+      "name": "Save to Supabase",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [2660, 100],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase_api",
+          "name": "Supabase API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://{{ $credentials.bitrix24Api.domain }}/rest/{{ $credentials.bitrix24Api.accessToken }}/crm.{{ $json.final_data.crm_entity_type }}.update",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"id\": \"{{ $json.final_data.crm_entity_id }}\",\n  \"fields\": {\n    \"UF_CRM_CALL_TRANSCRIPT\": \"{{ $json.final_data.transcript }}\",\n    \"UF_CRM_CALL_SUMMARY\": \"{{ $json.final_data.ai_analysis.summary }}\",\n    \"UF_CRM_CALL_SENTIMENT\": \"{{ $json.final_data.ai_analysis.sentiment }}\",\n    \"UF_CRM_CALL_QUALITY\": {{ $json.final_data.ai_analysis.call_quality_score }}\n  }\n}",
+        "options": {}
+      },
+      "id": "update-bitrix24-crm",
+      "name": "Update Bitrix24 CRM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2880, 100],
+      "credentials": {
+        "bitrix24Api": {
+          "id": "bitrix24_api",
+          "name": "Bitrix24 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://{{ $credentials.bitrix24Api.domain }}/rest/{{ $credentials.bitrix24Api.accessToken }}/im.notify",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"to\": \"{{ $json.final_data.portal_user_id }}\",\n  \"message\": \"Анализ звонка завершен!\\n\\nКраткое содержание: {{ $json.final_data.ai_analysis.summary }}\\n\\nОценка качества: {{ $json.final_data.ai_analysis.call_quality_score }}/10\\n\\nAction items: {{ $json.final_data.ai_analysis.action_items }}\",\n  \"type\": \"SYSTEM\"\n}",
+        "options": {}
+      },
+      "id": "send-notification",
+      "name": "Send Notification to User",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3100, 100],
+      "credentials": {
+        "bitrix24Api": {
+          "id": "bitrix24_api",
+          "name": "Bitrix24 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"success\": true, \"message\": \"Call processed successfully\", \"call_id\": \"{{ $('Parse Webhook Data').item.json.call_id }}\" }",
+        "options": {}
+      },
+      "id": "success-response",
+      "name": "Success Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [3320, 100]
+    },
+    {
+      "parameters": {},
+      "id": "no-recording-skip",
+      "name": "No Recording - Skip",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [900, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"success\": false, \"message\": \"No recording available or call too short\", \"call_id\": \"{{ $json.call_id }}\" }",
+        "options": {}
+      },
+      "id": "skip-response",
+      "name": "Skip Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1120, 400]
+    },
+    {
+      "parameters": {},
+      "id": "continue-waiting",
+      "name": "Continue Waiting",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [2000, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "error_message",
+              "name": "error_message",
+              "value": "={{ $json.error }}",
+              "type": "string"
+            },
+            {
+              "id": "error_node",
+              "name": "error_node",
+              "value": "={{ $json.node }}",
+              "type": "string"
+            },
+            {
+              "id": "call_id",
+              "name": "call_id",
+              "value": "={{ $('Parse Webhook Data').item.json.call_id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "catch-error",
+      "name": "Catch Error",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [1560, 500]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "tableId": "error_logs",
+        "dataMode": "autoMapInputData",
+        "options": {}
+      },
+      "id": "log-error-supabase",
+      "name": "Log Error to Supabase",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1780, 500],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase_api",
+          "name": "Supabase API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"success\": false, \"message\": \"Error processing call\", \"error\": \"{{ $json.error_message }}\" }",
+        "options": {}
+      },
+      "id": "error-response",
+      "name": "Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2000, 500]
+    }
+  ],
+  "connections": {
+    "Webhook Bitrix24": {
+      "main": [
+        [
+          {
+            "node": "Parse Webhook Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Webhook Data": {
+      "main": [
+        [
+          {
+            "node": "Check Recording Exists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Recording Exists": {
+      "main": [
+        [
+          {
+            "node": "Download Audio File",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Recording - Skip",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Audio File": {
+      "main": [
+        [
+          {
+            "node": "Upload to AssemblyAI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload to AssemblyAI": {
+      "main": [
+        [
+          {
+            "node": "Start Transcription",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Start Transcription": {
+      "main": [
+        [
+          {
+            "node": "Wait for Transcription",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for Transcription": {
+      "main": [
+        [
+          {
+            "node": "Check Transcription Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Transcription Status": {
+      "main": [
+        [
+          {
+            "node": "Is Transcription Done?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Transcription Done?": {
+      "main": [
+        [
+          {
+            "node": "Analyze with ChatGPT",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Continue Waiting",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze with ChatGPT": {
+      "main": [
+        [
+          {
+            "node": "Prepare Final Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Final Data": {
+      "main": [
+        [
+          {
+            "node": "Save to Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to Supabase": {
+      "main": [
+        [
+          {
+            "node": "Update Bitrix24 CRM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Bitrix24 CRM": {
+      "main": [
+        [
+          {
+            "node": "Send Notification to User",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Notification to User": {
+      "main": [
+        [
+          {
+            "node": "Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No Recording - Skip": {
+      "main": [
+        [
+          {
+            "node": "Skip Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Continue Waiting": {
+      "main": [
+        [
+          {
+            "node": "Wait for Transcription",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Catch Error": {
+      "main": [
+        [
+          {
+            "node": "Log Error to Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Error to Supabase": {
+      "main": [
+        [
+          {
+            "node": "Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "",
+    "timezone": "Europe/Moscow",
+    "saveExecutionProgress": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "bitrix24",
+      "id": "bitrix24-tag"
+    },
+    {
+      "name": "transcription",
+      "id": "transcription-tag"
+    },
+    {
+      "name": "ai-analysis",
+      "id": "ai-tag"
+    }
+  ],
+  "meta": {
+    "instanceId": "n8n-bitrix24-transcription-instance"
+  },
+  "id": "bitrix24-call-transcription-workflow",
+  "versionId": "1",
+  "triggerCount": 1,
+  "active": false
+}
