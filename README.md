@@ -40,12 +40,6 @@
 2. Создайте Generic Credential для Bitrix24
 3. Сохраните ваш Bitrix24 domain и access token
 
-#### Bitrix24 Recording Auth (опционально)
-Если записи звонков защищены Basic Auth:
-1. **Settings → Credentials → New**
-2. Выберите **HTTP Basic Auth**
-3. Username и Password для доступа к записям
-
 ### 3. Получить Webhook URL в n8n
 
 1. Откройте workflow в редакторе
@@ -360,7 +354,6 @@ GPT-4 возвращает JSON со структурой:
 2. Убедитесь, что API ключ корректный в credentials
 3. Проверьте формат аудиофайла (поддерживаются: mp3, wav, flac, m4a)
 4. Убедитесь, что файл записи доступен (URL не истек)
-5. Для защищенных записей настройте Basic Auth credentials
 
 ### Транскрипция застряла в статусе "processing"
 

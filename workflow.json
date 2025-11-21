@@ -118,8 +118,6 @@
     {
       "parameters": {
         "url": "={{ $json.recording_url }}",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpBasicAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -141,13 +139,7 @@
       "name": "Download Audio File",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [900, 200],
-      "credentials": {
-        "httpBasicAuth": {
-          "id": "bitrix24_recording_auth",
-          "name": "Bitrix24 Recording Auth"
-        }
-      }
+      "position": [900, 200]
     },
     {
       "parameters": {
