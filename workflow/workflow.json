@@ -1,43 +1,18 @@
 {
-  "name": "Call Analysis - AssemblyAI + GPT + Bitrix24",
+  "name": "Call Analysis - AssemblyAI + GPT + Bitrix24 (Webhook)",
   "nodes": [
     {
       "parameters": {
-        "rule": {
-          "interval": [
-            {
-              "field": "minutes",
-              "minutesInterval": 3
-            }
-          ]
-        }
+        "path": "call-bitrix-incoming",
+        "responseMode": "onReceived",
+        "options": {}
       },
-      "id": "schedule-trigger",
-      "name": "Schedule Trigger",
-      "type": "n8n-nodes-base.scheduleTrigger",
-      "typeVersion": 1.2,
-      "position": [0, 300]
-    },
-    {
-      "parameters": {
-        "operation": "getAll",
-        "tableId": "calls_analysis",
-        "returnAll": false,
-        "limit": 10,
-        "filterType": "string",
-        "filterString": "transcription_status=eq.pending"
-      },
-      "id": "supabase-get-pending",
-      "name": "Get Pending Calls",
-      "type": "n8n-nodes-base.supabase",
-      "typeVersion": 1,
-      "position": [220, 300],
-      "credentials": {
-        "supabaseApi": {
-          "id": "SUPABASE_CREDENTIAL_ID",
-          "name": "Supabase API"
-        }
-      }
+      "id": "webhook-trigger",
+      "name": "Bitrix24 Call Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300],
+      "webhookId": "bitrix-call-webhook"
     },
     {
       "parameters": {
@@ -49,11 +24,103 @@
           },
           "conditions": [
             {
-              "id": "condition-has-data",
-              "leftValue": "={{ $json }}",
+              "id": "condition-event-type",
+              "leftValue": "={{ $json.body.event }}",
+              "rightValue": "ONVOXIMPLANTCALLEND",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-call-end-event",
+      "name": "Is Call End Event?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "set-call-id",
+              "name": "call_id",
+              "value": "={{ $json.body.data.CALL_ID }}",
+              "type": "string"
+            },
+            {
+              "id": "set-lead-id",
+              "name": "lead_id",
+              "value": "={{ $json.body.data.CRM_ENTITY_TYPE === 'LEAD' ? $json.body.data.CRM_ENTITY_ID : null }}",
+              "type": "string"
+            },
+            {
+              "id": "set-deal-id",
+              "name": "deal_id",
+              "value": "={{ $json.body.data.CRM_ENTITY_TYPE === 'DEAL' ? $json.body.data.CRM_ENTITY_ID : null }}",
+              "type": "string"
+            },
+            {
+              "id": "set-record-file-id",
+              "name": "record_file_id",
+              "value": "={{ $json.body.data.RECORD_FILE_ID }}",
+              "type": "string"
+            },
+            {
+              "id": "set-duration",
+              "name": "duration",
+              "value": "={{ $json.body.data.DURATION }}",
+              "type": "number"
+            },
+            {
+              "id": "set-call-date",
+              "name": "call_date",
+              "value": "={{ new Date().toISOString() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "extract-webhook-data",
+      "name": "Extract Webhook Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [440, 200]
+    },
+    {
+      "parameters": {
+        "batchSize": 5,
+        "options": {
+          "reset": false
+        }
+      },
+      "id": "limit-5-records",
+      "name": "Limit to 5 Records",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [660, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-has-record",
+              "leftValue": "={{ $json.record_file_id }}",
               "rightValue": "",
               "operator": {
-                "type": "object",
+                "type": "string",
                 "operation": "notEmpty"
               }
             }
@@ -62,41 +129,157 @@
         },
         "options": {}
       },
-      "id": "if-has-data",
-      "name": "Has Data?",
+      "id": "if-has-record-id",
+      "name": "Has Record File ID?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [440, 300]
+      "position": [880, 200]
     },
     {
       "parameters": {
+        "method": "GET",
+        "url": "={{ $credentials.bitrix24Webhook }}disk.file.get?id={{ $json.record_file_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpQueryAuth",
         "options": {
-          "reset": false
+          "timeout": 30000
         }
       },
-      "id": "loop-items",
-      "name": "Loop Over Items",
-      "type": "n8n-nodes-base.splitInBatches",
-      "typeVersion": 3,
-      "position": [660, 200]
+      "id": "bitrix-get-file-info",
+      "name": "Bitrix24 Get File Info",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1100, 100],
+      "credentials": {
+        "httpQueryAuth": {
+          "id": "BITRIX24_CREDENTIAL_ID",
+          "name": "Bitrix24 Webhook"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
     },
     {
       "parameters": {
-        "operation": "update",
-        "tableId": "calls_analysis",
-        "matchingColumns": ["id"],
-        "columns": {
-          "mappingMode": "defineBelow",
-          "value": {
-            "transcription_status": "processing"
+        "method": "GET",
+        "url": "={{ $json.result.DOWNLOAD_URL }}",
+        "authentication": "none",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
           }
         }
       },
-      "id": "supabase-set-processing",
-      "name": "Set Status Processing",
+      "id": "download-call-recording",
+      "name": "Download Call Recording",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1320, 100],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "operation": "upload",
+        "bucketName": "call-recordings",
+        "fileName": "={{ $('Extract Webhook Data').item.json.call_id }}.mp3",
+        "options": {}
+      },
+      "id": "supabase-upload-file",
+      "name": "Upload to Supabase Storage",
       "type": "n8n-nodes-base.supabase",
       "typeVersion": 1,
-      "position": [880, 200],
+      "position": [1540, 100],
+      "credentials": {
+        "supabaseApi": {
+          "id": "SUPABASE_CREDENTIAL_ID",
+          "name": "Supabase API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "set-audio-url",
+              "name": "audio_url",
+              "value": "={{ $json.publicUrl }}",
+              "type": "string"
+            },
+            {
+              "id": "set-call-id-merge",
+              "name": "call_id",
+              "value": "={{ $('Extract Webhook Data').item.json.call_id }}",
+              "type": "string"
+            },
+            {
+              "id": "set-lead-id-merge",
+              "name": "lead_id",
+              "value": "={{ $('Extract Webhook Data').item.json.lead_id }}",
+              "type": "string"
+            },
+            {
+              "id": "set-deal-id-merge",
+              "name": "deal_id",
+              "value": "={{ $('Extract Webhook Data').item.json.deal_id }}",
+              "type": "string"
+            },
+            {
+              "id": "set-call-date-merge",
+              "name": "call_date",
+              "value": "={{ $('Extract Webhook Data').item.json.call_date }}",
+              "type": "string"
+            },
+            {
+              "id": "set-duration-merge",
+              "name": "audio_duration_seconds",
+              "value": "={{ $('Extract Webhook Data').item.json.duration }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "prepare-supabase-data",
+      "name": "Prepare Supabase Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1760, 100]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "tableId": "calls_analysis",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "call_id": "={{ $json.call_id }}",
+            "lead_id": "={{ $json.lead_id }}",
+            "deal_id": "={{ $json.deal_id }}",
+            "call_date": "={{ $json.call_date }}",
+            "audio_url": "={{ $json.audio_url }}",
+            "audio_duration_seconds": "={{ $json.audio_duration_seconds }}",
+            "transcription_status": "pending"
+          }
+        },
+        "options": {
+          "onConflict": {
+            "columns": ["call_id"],
+            "onConflictAction": "doNothing"
+          }
+        }
+      },
+      "id": "supabase-create-record",
+      "name": "Create Call Record in Supabase",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1980, 100],
       "credentials": {
         "supabaseApi": {
           "id": "SUPABASE_CREDENTIAL_ID",
@@ -121,7 +304,7 @@
       "name": "AssemblyAI Start Transcription",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1100, 200],
+      "position": [2200, 100],
       "credentials": {
         "httpHeaderAuth": {
           "id": "ASSEMBLYAI_CREDENTIAL_ID",
@@ -136,11 +319,12 @@
       "parameters": {
         "operation": "update",
         "tableId": "calls_analysis",
-        "matchingColumns": ["id"],
+        "matchingColumns": ["call_id"],
         "columns": {
           "mappingMode": "defineBelow",
           "value": {
-            "assemblyai_transcript_id": "={{ $json.id }}"
+            "assemblyai_transcript_id": "={{ $json.id }}",
+            "transcription_status": "processing"
           }
         }
       },
@@ -148,7 +332,7 @@
       "name": "Save Transcript ID",
       "type": "n8n-nodes-base.supabase",
       "typeVersion": 1,
-      "position": [1320, 200],
+      "position": [2420, 100],
       "credentials": {
         "supabaseApi": {
           "id": "SUPABASE_CREDENTIAL_ID",
@@ -165,7 +349,7 @@
       "name": "Wait 10s",
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
-      "position": [1540, 200],
+      "position": [2640, 100],
       "webhookId": "wait-polling-webhook"
     },
     {
@@ -182,7 +366,7 @@
       "name": "Check Transcription Status",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1760, 200],
+      "position": [2860, 100],
       "credentials": {
         "httpHeaderAuth": {
           "id": "ASSEMBLYAI_CREDENTIAL_ID",
@@ -220,7 +404,7 @@
       "name": "Transcription Completed?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [1980, 200]
+      "position": [3080, 100]
     },
     {
       "parameters": {
@@ -249,13 +433,13 @@
       "name": "Transcription Error?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [2200, 400]
+      "position": [3300, 300]
     },
     {
       "parameters": {
         "operation": "update",
         "tableId": "calls_analysis",
-        "matchingColumns": ["id"],
+        "matchingColumns": ["call_id"],
         "columns": {
           "mappingMode": "defineBelow",
           "value": {
@@ -268,7 +452,7 @@
       "name": "Set Status Failed",
       "type": "n8n-nodes-base.supabase",
       "typeVersion": 1,
-      "position": [2420, 500],
+      "position": [3520, 400],
       "credentials": {
         "supabaseApi": {
           "id": "SUPABASE_CREDENTIAL_ID",
@@ -280,12 +464,6 @@
       "parameters": {
         "assignments": {
           "assignments": [
-            {
-              "id": "set-transcript-id",
-              "name": "transcript_id",
-              "value": "={{ $json.id }}",
-              "type": "string"
-            },
             {
               "id": "set-transcript-text",
               "name": "transcript_text",
@@ -299,39 +477,27 @@
               "type": "array"
             },
             {
-              "id": "set-audio-duration",
-              "name": "audio_duration",
-              "value": "={{ $json.audio_duration }}",
-              "type": "number"
-            },
-            {
               "id": "set-speakers",
               "name": "speakers_count",
               "value": "={{ [...new Set($json.utterances.map(u => u.speaker))].length }}",
               "type": "number"
             },
             {
-              "id": "set-call-id",
-              "name": "call_id",
-              "value": "={{ $('Get Pending Calls').item.json.id }}",
-              "type": "string"
-            },
-            {
-              "id": "set-lead-id",
-              "name": "lead_id",
-              "value": "={{ $('Get Pending Calls').item.json.lead_id }}",
-              "type": "string"
-            },
-            {
-              "id": "set-deal-id",
-              "name": "deal_id",
-              "value": "={{ $('Get Pending Calls').item.json.deal_id }}",
-              "type": "string"
-            },
-            {
               "id": "set-formatted-transcript",
               "name": "formatted_transcript",
               "value": "={{ $json.utterances.map(u => `Speaker ${u.speaker}: ${u.text}`).join('\\n\\n') }}",
+              "type": "string"
+            },
+            {
+              "id": "set-call-id-extract",
+              "name": "call_id",
+              "value": "={{ $('Prepare Supabase Data').item.json.call_id }}",
+              "type": "string"
+            },
+            {
+              "id": "set-lead-id-extract",
+              "name": "lead_id",
+              "value": "={{ $('Prepare Supabase Data').item.json.lead_id }}",
               "type": "string"
             }
           ]
@@ -342,20 +508,19 @@
       "name": "Extract Transcription Data",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
-      "position": [2200, 100]
+      "position": [3300, 0]
     },
     {
       "parameters": {
         "operation": "update",
         "tableId": "calls_analysis",
-        "matchingColumns": ["id"],
+        "matchingColumns": ["call_id"],
         "columns": {
           "mappingMode": "defineBelow",
           "value": {
             "transcription_status": "completed",
             "transcript_raw": "={{ JSON.stringify($json) }}",
             "transcript": "={{ $json.formatted_transcript }}",
-            "audio_duration_seconds": "={{ $json.audio_duration }}",
             "speakers_detected": "={{ $json.speakers_count }}"
           }
         }
@@ -364,7 +529,7 @@
       "name": "Save Raw Transcription",
       "type": "n8n-nodes-base.supabase",
       "typeVersion": 1,
-      "position": [2420, 100],
+      "position": [3520, 0],
       "credentials": {
         "supabaseApi": {
           "id": "SUPABASE_CREDENTIAL_ID",
@@ -384,7 +549,7 @@
       "name": "AI Agent 0 - Clean Transcription",
       "type": "@n8n/n8n-nodes-langchain.agent",
       "typeVersion": 2,
-      "position": [2640, 100],
+      "position": [3740, 0],
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 5000
@@ -402,7 +567,7 @@
       "name": "OpenAI Model 0",
       "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
       "typeVersion": 1.2,
-      "position": [2660, 320],
+      "position": [3760, 220],
       "credentials": {
         "openAiApi": {
           "id": "OPENAI_CREDENTIAL_ID",
@@ -414,7 +579,7 @@
       "parameters": {
         "operation": "update",
         "tableId": "calls_analysis",
-        "matchingColumns": ["id"],
+        "matchingColumns": ["call_id"],
         "columns": {
           "mappingMode": "defineBelow",
           "value": {
@@ -427,7 +592,7 @@
       "name": "Save Clean Transcription",
       "type": "n8n-nodes-base.supabase",
       "typeVersion": 1,
-      "position": [2860, 100],
+      "position": [3960, 0],
       "credentials": {
         "supabaseApi": {
           "id": "SUPABASE_CREDENTIAL_ID",
@@ -438,16 +603,16 @@
     {
       "parameters": {
         "promptType": "define",
-        "text": "Ты — эксперт по оценке работы менеджеров отдела продаж металлопроката.\n\nПроанализируй транскрибацию звонка и оцени УСТАНОВЛЕНИЕ КОНТАКТА:\n\n1. Менеджер приветствует по стандарту (\"Добрый день! Меня зовут...\")? → да/нет + цитата\n2. Менеджер уточняет имя клиента (\"Как вас зовут? Как к вам обращаться?\")? → да/нет + цитата\n3. Менеджер озвучивает цель звонка? → да/нет + цитата\n\nФормат ответа:\nВопрос 1: да/нет. Обоснование: [цитата из транскрибации]\nВопрос 2: да/нет. Обоснование: [цитата]\nВопрос 3: да/нет. Обоснование: [цитата]\n\nТранскрибация:\n{{ $('Save Clean Transcription').item.json.clean_transcript }}",
+        "text": "Ты — эксперт по оценке работы менеджеров отдела продаж металлопроката.\n\nПроанализируй транскрибацию звонка и оцени УСТАНОВЛЕНИЕ КОНТАКТА:\n\n1. Менеджер приветствует по стандарту (\"Добрый день! Меня зовут...\")? → да/нет + цитата\n2. Менеджер уточняет имя клиента (\"Как вас зовут? Как к вам обращаться?\")? → да/нет + цитата\n3. Менеджер озвучивает цель звонка? → да/нет + цитата\n\nФормат ответа:\nВопрос 1: да/нет. Обоснование: [цитата из транскрибации]\nВопрос 2: да/нет. Обоснование: [цитата]\nВопрос 3: да/нет. Обоснование: [цитата]\n\nТранскрибация:\n{{ $('Save Clean Transcription').item.json.output }}",
         "options": {
-          "systemMessage": "Ты — эксперт по оценке работы менеджеров продаж металлопроката. Анализируй строго по критериям, давай чёткие ответы с цитатами."
+          "systemMessage": "Ты — эксперт по оценке работы менеджеров продаж металлопроката. Анализируй строго по критериям."
         }
       },
       "id": "ai-agent-1-part1",
       "name": "AI Agent 1 - Manager Part 1",
       "type": "@n8n/n8n-nodes-langchain.agent",
       "typeVersion": 2,
-      "position": [3080, 100],
+      "position": [4180, 0],
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 5000
@@ -457,15 +622,14 @@
         "options": {
           "model": "gpt-4-turbo",
           "temperature": 0,
-          "maxTokens": 4000,
-          "topP": 1
+          "maxTokens": 4000
         }
       },
       "id": "openai-model-1",
       "name": "OpenAI Model 1",
       "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
       "typeVersion": 1.2,
-      "position": [3100, 320],
+      "position": [4200, 220],
       "credentials": {
         "openAiApi": {
           "id": "OPENAI_CREDENTIAL_ID",
@@ -476,16 +640,16 @@
     {
       "parameters": {
         "promptType": "define",
-        "text": "Ты — эксперт по оценке работы менеджеров отдела продаж металлопроката.\n\nПроанализируй транскрибацию и оцени КВАЛИФИКАЦИЮ И ВЫЯВЛЕНИЕ ПОТРЕБНОСТИ.\n\nЕсли звонок ПО ЗАЯВКЕ (клиент уже оставил заявку), проверь обязательные вопросы:\n1. Что планируете строить? Для каких работ требуется металл? → да/нет + цитата\n2. Когда планируете принимать решение? → да/нет + цитата\n3. Как срочно потребуется доставка? Горит или не горит? → да/нет + цитата\n4. Нужно ли порезать/покрасить/согнуть/обработать металл? → да/нет + цитата\n5. С кем конкурируете? Есть лучшие предложения? → да/нет + цитата\n6. Предложил сэкономить (б/у металл или немерный)? → да/нет + цитата\n\nЕсли звонок БЕЗ ЗАЯВКИ (холодный звонок), проверь:\n1. Когда планируется закупка? → да/нет + цитата\n2. Что будете закупать? Что обычно берете? → да/нет + цитата\n3. С кем буду конкурировать? → да/нет + цитата\n4. Нужна ли обработка металла? → да/нет + цитата\n5. Можно перезвонить ближе к делу? → да/нет + цитата\n\nУкажи, какой тип звонка (по заявке / без заявки) и ответь по соответствующим критериям.\n\nТранскрибация:\n{{ $('Save Clean Transcription').item.json.clean_transcript }}",
+        "text": "Ты — эксперт по оценке работы менеджеров отдела продаж металлопроката.\n\nПроанализируй транскрибацию и оцени КВАЛИФИКАЦИЮ И ВЫЯВЛЕНИЕ ПОТРЕБНОСТИ.\n\nЕсли звонок ПО ЗАЯВКЕ, проверь:\n1. Что планируете строить? Для каких работ? → да/нет + цитата\n2. Когда принимаете решение? → да/нет + цитата\n3. Как срочно доставка? → да/нет + цитата\n4. Нужна обработка металла? → да/нет + цитата\n5. С кем конкурируем? → да/нет + цитата\n6. Предложил сэкономить? → да/нет + цитата\n\nЕсли БЕЗ ЗАЯВКИ:\n1. Когда планируется? → да/нет + цитата\n2. Что закупаете обычно? → да/нет + цитата\n3. С кем конкурирую? → да/нет + цитата\n4. Нужна обработка? → да/нет + цитата\n5. Можно перезвонить? → да/нет + цитата\n\nТранскрибация:\n{{ $('Save Clean Transcription').item.json.output }}",
         "options": {
-          "systemMessage": "Ты — эксперт по оценке работы менеджеров продаж металлопроката. Сначала определи тип звонка (по заявке/без заявки), затем анализируй по соответствующим критериям."
+          "systemMessage": "Ты — эксперт по оценке. Определи тип звонка и анализируй по критериям."
         }
       },
       "id": "ai-agent-2-part2",
       "name": "AI Agent 2 - Manager Part 2",
       "type": "@n8n/n8n-nodes-langchain.agent",
       "typeVersion": 2,
-      "position": [3300, 100],
+      "position": [4400, 0],
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 5000
@@ -495,15 +659,14 @@
         "options": {
           "model": "gpt-4-turbo",
           "temperature": 0,
-          "maxTokens": 4000,
-          "topP": 1
+          "maxTokens": 4000
         }
       },
       "id": "openai-model-2",
       "name": "OpenAI Model 2",
       "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
       "typeVersion": 1.2,
-      "position": [3320, 320],
+      "position": [4420, 220],
       "credentials": {
         "openAiApi": {
           "id": "OPENAI_CREDENTIAL_ID",
@@ -514,16 +677,16 @@
     {
       "parameters": {
         "promptType": "define",
-        "text": "Ты — эксперт по оценке работы менеджеров отдела продаж металлопроката.\n\nПроанализируй транскрибацию и оцени:\n\n1. РАБОТА С ВОЗРАЖЕНИЯМИ (если были):\n   - Аргументированно отвечает на возражения? → да/нет/частично + цитата\n   - Озвучивает преимущества компании (доставка день в день, резка, производство металлоконструкций, профлист, сэндвич-панели, 10000+ позиций)? → да/нет + цитата\n\n2. ПРОАКТИВНАЯ ПОЗИЦИЯ:\n   - Проявляет инициативу (задаёт вопросы, а не только отвечает)? → да/нет + цитата\n   - Предлагает варианты решений и допуслуги? → да/нет + цитата\n\n3. ЗАВЕРШЕНИЕ РАЗГОВОРА:\n   - Подводит итоги разговора (резюмирует)? → да/нет + цитата\n   - Договаривается о дате следующего контакта? → да/нет + цитата\n\nЕсли возражений не было — напиши \"Возражений не было\".\n\nТранскрибация:\n{{ $('Save Clean Transcription').item.json.clean_transcript }}",
+        "text": "Проанализируй:\n\n1. РАБОТА С ВОЗРАЖЕНИЯМИ:\n   - Аргументированно отвечает? → да/нет/частично + цитата\n   - Озвучил преимущества? → да/нет + цитата\n\n2. ПРОАКТИВНОСТЬ:\n   - Задаёт вопросы? → да/нет + цитата\n   - Предлагает решения? → да/нет + цитата\n\n3. ЗАВЕРШЕНИЕ:\n   - Резюмирует? → да/нет + цитата\n   - Договорился о дате? → да/нет + цитата\n\nТранскрибация:\n{{ $('Save Clean Transcription').item.json.output }}",
         "options": {
-          "systemMessage": "Ты — эксперт по оценке работы менеджеров продаж металлопроката. Анализируй работу с возражениями, проактивность и завершение разговора."
+          "systemMessage": "Эксперт по оценке менеджеров."
         }
       },
       "id": "ai-agent-3-part3",
       "name": "AI Agent 3 - Manager Part 3",
       "type": "@n8n/n8n-nodes-langchain.agent",
       "typeVersion": 2,
-      "position": [3520, 100],
+      "position": [4620, 0],
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 5000
@@ -533,15 +696,14 @@
         "options": {
           "model": "gpt-4-turbo",
           "temperature": 0,
-          "maxTokens": 4000,
-          "topP": 1
+          "maxTokens": 4000
         }
       },
       "id": "openai-model-3",
       "name": "OpenAI Model 3",
       "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
       "typeVersion": 1.2,
-      "position": [3540, 320],
+      "position": [4640, 220],
       "credentials": {
         "openAiApi": {
           "id": "OPENAI_CREDENTIAL_ID",
@@ -552,16 +714,16 @@
     {
       "parameters": {
         "promptType": "define",
-        "text": "Ты — система подсчёта баллов для оценки менеджеров по продаже металлопроката.\n\nАнкета оценки (максимум 100 баллов):\n\nУСТАНОВЛЕНИЕ КОНТАКТА:\n- Приветствует по стандарту: 10 баллов (да=10, нет=0)\n- Уточняет имя клиента: 10 баллов (да=10, нет=0)\n- Озвучивает цель звонка: 10 баллов (да=10, нет=0)\n\nКВАЛИФИКАЦИЯ (по заявке - 6 вопросов):\n- 5-6 вопросов: 10 баллов\n- 3-4 вопроса: 5 баллов\n- 2 и менее: 0 баллов\n\nКВАЛИФИКАЦИЯ (без заявки - 5 вопросов):\n- 4-5 вопросов: 10 баллов\n- 3 вопроса: 5 баллов\n- 2 и менее: 0 баллов\n\nРАБОТА С ВОЗРАЖЕНИЯМИ (если были):\n- Отработал и закрыл: 10 баллов\n- Привёл аргументы, но не закрыл: 5 баллов\n- Не отработал: 0 баллов\n(Если возражений не было - 10 баллов автоматом)\n\nОЗВУЧИЛ ПРЕИМУЩЕСТВА: 10 баллов (да=10, нет=0)\n\nПРОАКТИВНАЯ ПОЗИЦИЯ:\n- Проявляет инициативу: 10 баллов (да=10, нет=0)\n- Предлагает решения/допуслуги: 10 баллов (да=10, нет=0)\n\nЗАВЕРШЕНИЕ:\n- Подводит итоги: 10 баллов (да=10, нет=0)\n- Договорился о дате контакта: 10 баллов (да=10, нет=0)\n\nРезультаты анализа:\nЧасть 1 (Установление контакта):\n{{ $('AI Agent 1 - Manager Part 1').item.json.output }}\n\nЧасть 2 (Квалификация):\n{{ $('AI Agent 2 - Manager Part 2').item.json.output }}\n\nЧасть 3 (Возражения, проактивность, завершение):\n{{ $('AI Agent 3 - Manager Part 3').item.json.output }}\n\nПосчитай итоговую сумму баллов. Ответь в формате:\nИТОГО: [число] баллов из 100\n\nДетализация:\n- Установление контакта: X/30\n- Квалификация: X/10\n- Работа с возражениями: X/10\n- Преимущества: X/10\n- Проактивность: X/20\n- Завершение: X/20",
+        "text": "Система подсчёта баллов (максимум 100):\n\nУСТАНОВЛЕНИЕ: 30 баллов (по 10)\nКВАЛИФИКАЦИЯ: 10 баллов\nВОЗРАЖЕНИЯ: 10 баллов\nПРЕИМУЩЕСТВА: 10 баллов\nПРОАКТИВНОСТЬ: 20 баллов\nЗАВЕРШЕНИЕ: 20 баллов\n\nРезультаты:\nЧасть 1: {{ $('AI Agent 1 - Manager Part 1').item.json.output }}\nЧасть 2: {{ $('AI Agent 2 - Manager Part 2').item.json.output }}\nЧасть 3: {{ $('AI Agent 3 - Manager Part 3').item.json.output }}\n\nОтвет:\nИТОГО: [число] из 100",
         "options": {
-          "systemMessage": "Ты — система подсчёта баллов. Строго следуй анкете оценки и посчитай итоговый балл. Будь точен в подсчётах."
+          "systemMessage": "Система подсчёта. Строго по анкете."
         }
       },
       "id": "ai-agent-4-score",
-      "name": "AI Agent 4 - Calculate Score",
+      "name": "AI Agent 4 - Score",
       "type": "@n8n/n8n-nodes-langchain.agent",
       "typeVersion": 2,
-      "position": [3740, 100],
+      "position": [4840, 0],
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 5000
@@ -571,15 +733,14 @@
         "options": {
           "model": "o3-mini",
           "temperature": 0,
-          "maxTokens": 2000,
-          "topP": 1
+          "maxTokens": 2000
         }
       },
       "id": "openai-model-4",
       "name": "OpenAI Model 4 (O3)",
       "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
       "typeVersion": 1.2,
-      "position": [3760, 320],
+      "position": [4860, 220],
       "credentials": {
         "openAiApi": {
           "id": "OPENAI_CREDENTIAL_ID",
@@ -590,16 +751,16 @@
     {
       "parameters": {
         "promptType": "define",
-        "text": "Ты — коуч по продажам металлопроката.\n\nНа основе анализа звонка дай менеджеру краткую обратную связь:\n\n1. ЧТО ХОРОШО ПОЛУЧИЛОСЬ (2-3 пункта):\n   - Конкретные действия, которые менеджер сделал правильно\n\n2. ЧТО МОЖНО УЛУЧШИТЬ (2-3 пункта):\n   - Конкретные рекомендации по улучшению\n\n3. ОБЩАЯ РЕКОМЕНДАЦИЯ (1 предложение):\n   - Главный совет на следующий звонок\n\nРезультаты анализа:\n{{ $('AI Agent 4 - Calculate Score').item.json.output }}\n\nОтвет должен быть конструктивным и мотивирующим. Не критикуй — давай конкретные советы.",
+        "text": "Коуч по продажам металлопроката.\n\nДай обратную связь:\n\n1. ЧТО ХОРОШО (2-3)\n2. ЧТО УЛУЧШИТЬ (2-3)\n3. РЕКОМЕНДАЦИЯ (1 предложение)\n\nОценка: {{ $('AI Agent 4 - Score').item.json.output }}",
         "options": {
-          "systemMessage": "Ты — коуч по продажам металлопроката. Давай конструктивную обратную связь: что хорошо, что улучшить, главная рекомендация."
+          "systemMessage": "Коуч по продажам."
         }
       },
       "id": "ai-agent-5-recommendations",
       "name": "AI Agent 5 - Recommendations",
       "type": "@n8n/n8n-nodes-langchain.agent",
       "typeVersion": 2,
-      "position": [3960, 100],
+      "position": [5060, 0],
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 5000
@@ -609,15 +770,14 @@
         "options": {
           "model": "gpt-4o",
           "temperature": 0.3,
-          "maxTokens": 2000,
-          "topP": 1
+          "maxTokens": 2000
         }
       },
       "id": "openai-model-5",
       "name": "OpenAI Model 5",
       "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
       "typeVersion": 1.2,
-      "position": [3980, 320],
+      "position": [5080, 220],
       "credentials": {
         "openAiApi": {
           "id": "OPENAI_CREDENTIAL_ID",
@@ -628,16 +788,16 @@
     {
       "parameters": {
         "promptType": "define",
-        "text": "Создай структурированный комментарий для CRM Bitrix24 по работе менеджера:\n\n---\nОЦЕНКА ЗВОНКА\n{{ $('AI Agent 4 - Calculate Score').item.json.output }}\n\nАНАЛИЗ ПО КРИТЕРИЯМ:\n\nУстановление контакта:\n{{ $('AI Agent 1 - Manager Part 1').item.json.output }}\n\nКвалификация и выявление потребности:\n{{ $('AI Agent 2 - Manager Part 2').item.json.output }}\n\nРабота с возражениями и завершение:\n{{ $('AI Agent 3 - Manager Part 3').item.json.output }}\n\nРЕКОМЕНДАЦИИ:\n{{ $('AI Agent 5 - Recommendations').item.json.output }}\n---\n\nСделай комментарий читаемым и структурированным. Используй разделители и эмодзи для наглядности.",
+        "text": "Создай комментарий для CRM:\n\nОЦЕНКА: {{ $('AI Agent 4 - Score').item.json.output }}\n\nКОНТАКТ: {{ $('AI Agent 1 - Manager Part 1').item.json.output }}\nКВАЛИФИКАЦИЯ: {{ $('AI Agent 2 - Manager Part 2').item.json.output }}\nВОЗРАЖЕНИЯ: {{ $('AI Agent 3 - Manager Part 3').item.json.output }}\n\nРЕКОМЕНДАЦИИ: {{ $('AI Agent 5 - Recommendations').item.json.output }}",
         "options": {
-          "systemMessage": "Ты создаёшь структурированные комментарии для CRM. Используй эмодзи и чёткую структуру."
+          "systemMessage": "Создаёшь комментарии для CRM."
         }
       },
-      "id": "ai-agent-6-bitrix-comment",
-      "name": "AI Agent 6 - Manager Bitrix Comment",
+      "id": "ai-agent-6-manager-comment",
+      "name": "AI Agent 6 - Manager Comment",
       "type": "@n8n/n8n-nodes-langchain.agent",
       "typeVersion": 2,
-      "position": [4180, 100],
+      "position": [5280, 0],
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 5000
@@ -647,15 +807,14 @@
         "options": {
           "model": "gpt-4-turbo",
           "temperature": 0,
-          "maxTokens": 3000,
-          "topP": 1
+          "maxTokens": 3000
         }
       },
       "id": "openai-model-6",
       "name": "OpenAI Model 6",
       "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
       "typeVersion": 1.2,
-      "position": [4200, 320],
+      "position": [5300, 220],
       "credentials": {
         "openAiApi": {
           "id": "OPENAI_CREDENTIAL_ID",
@@ -666,16 +825,16 @@
     {
       "parameters": {
         "promptType": "define",
-        "text": "Ты — эксперт по анализу клиентов в сфере продаж металлопроката.\n\nПроанализируй клиента и ответь:\n\n1. ГОТОВНОСТЬ К ПОКУПКЕ:\n   - Клиент готов купить в ближайшее время (< 1 месяца)? → да/нет + обоснование\n   - Есть конкретная потребность (объект, проект, сроки)? → да/нет + обоснование\n\n2. ФИНАНСЫ:\n   - Клиент обсуждал бюджет/цены? → да/нет + обоснование\n   - Есть признаки платёжеспособности? → да/нет + обоснование\n\n3. СРОЧНОСТЬ:\n   - Клиент упоминал конкретные сроки? → да/нет + обоснование\n   - Есть признаки срочности (\"горит\", \"нужно быстро\")? → да/нет + обоснование\n\n4. ВОВЛЕЧЁННОСТЬ:\n   - Клиент задавал конкретные вопросы о продукции? → да/нет + обоснование\n   - Клиент согласился на следующий шаг (расчёт, встреча, звонок)? → да/нет + обоснование\n\n5. РЕГУЛЯРНОСТЬ:\n   - Есть признаки регулярных закупок? → да/нет + обоснование\n   - Клиент упоминал других поставщиков? → да/нет + обоснование\n\nТранскрибация:\n{{ $('Save Clean Transcription').item.json.clean_transcript }}",
+        "text": "Анализ клиента металлопроката:\n\n1. ГОТОВНОСТЬ (<1 мес)? → да/нет\n2. ФИНАНСЫ? → да/нет\n3. СРОЧНОСТЬ? → да/нет\n4. ВОВЛЕЧЁННОСТЬ? → да/нет\n5. РЕГУЛЯРНОСТЬ? → да/нет\n\nТранскрибация:\n{{ $('Save Clean Transcription').item.json.output }}",
         "options": {
-          "systemMessage": "Ты — эксперт по анализу клиентов в сфере B2B продаж металлопроката. Анализируй готовность к покупке, финансы, срочность и вовлечённость."
+          "systemMessage": "Анализ клиентов B2B металлопроката."
         }
       },
-      "id": "ai-agent-7-client-analysis",
+      "id": "ai-agent-7-client",
       "name": "AI Agent 7 - Client Analysis",
       "type": "@n8n/n8n-nodes-langchain.agent",
       "typeVersion": 2,
-      "position": [4400, 100],
+      "position": [5500, 0],
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 5000
@@ -685,15 +844,14 @@
         "options": {
           "model": "gpt-4-turbo",
           "temperature": 0,
-          "maxTokens": 3000,
-          "topP": 1
+          "maxTokens": 3000
         }
       },
       "id": "openai-model-7",
       "name": "OpenAI Model 7",
       "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
       "typeVersion": 1.2,
-      "position": [4420, 320],
+      "position": [5520, 220],
       "credentials": {
         "openAiApi": {
           "id": "OPENAI_CREDENTIAL_ID",
@@ -704,16 +862,16 @@
     {
       "parameters": {
         "promptType": "define",
-        "text": "Ты — система классификации клиентов для продаж металлопроката.\n\nКритерии типов клиентов:\n\nГОРЯЧИЙ:\n- Готов купить в течение 1-2 недель\n- Есть конкретный объект/проект с чёткими сроками\n- Обсуждает цены и условия\n- Согласился на расчёт/встречу/следующий контакт\n- Задаёт конкретные вопросы о наличии, доставке\n\nТЁПЛЫЙ:\n- Покупка запланирована на 1-3 месяца\n- Есть потребность, но сроки не горят\n- Сравнивает поставщиков\n- Готов общаться, но не принял решение\n- Интересуется ассортиментом\n\nХОЛОДНЫЙ:\n- Покупка через > 3 месяцев или неопределённо\n- Только изучает рынок и цены\n- Не готов к активным действиям\n- Не согласился на следующий шаг\n- Мало вовлечён в разговор\n\nРезультаты анализа клиента:\n{{ $('AI Agent 7 - Client Analysis').item.json.output }}\n\nОпредели тип клиента. Ответь СТРОГО в формате:\nТИП: горячий/тёплый/холодный\n\nОБОСНОВАНИЕ: [2-3 предложения почему именно этот тип]",
+        "text": "Классификация клиента:\n\nГОРЯЧИЙ: <2 нед, проект, цены, расчёт\nТЁПЛЫЙ: 1-3 мес, сравнивает\nХОЛОДНЫЙ: >3 мес, изучает\n\nАнализ: {{ $('AI Agent 7 - Client Analysis').item.json.output }}\n\nОтвет:\nТИП: горячий/тёплый/холодный\nОБОСНОВАНИЕ: [2-3 предложения]",
         "options": {
-          "systemMessage": "Ты — система классификации клиентов. Определи тип клиента (горячий/тёплый/холодный) на основе критериев. Ответь строго по формату."
+          "systemMessage": "Классификация клиентов."
         }
       },
       "id": "ai-agent-8-client-type",
       "name": "AI Agent 8 - Client Type",
       "type": "@n8n/n8n-nodes-langchain.agent",
       "typeVersion": 2,
-      "position": [4620, 100],
+      "position": [5720, 0],
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 5000
@@ -723,15 +881,14 @@
         "options": {
           "model": "o3-mini",
           "temperature": 0,
-          "maxTokens": 1000,
-          "topP": 1
+          "maxTokens": 1000
         }
       },
       "id": "openai-model-8",
       "name": "OpenAI Model 8 (O3)",
       "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
       "typeVersion": 1.2,
-      "position": [4640, 320],
+      "position": [5740, 220],
       "credentials": {
         "openAiApi": {
           "id": "OPENAI_CREDENTIAL_ID",
@@ -742,16 +899,16 @@
     {
       "parameters": {
         "promptType": "define",
-        "text": "Создай комментарий по клиенту для CRM Bitrix24:\n\n---\nТИП КЛИЕНТА:\n{{ $('AI Agent 8 - Client Type').item.json.output }}\n\nАНАЛИЗ КЛИЕНТА:\n{{ $('AI Agent 7 - Client Analysis').item.json.output }}\n\nРЕКОМЕНДАЦИИ ПО РАБОТЕ С КЛИЕНТОМ:\n[на основе типа клиента дай 2-3 конкретных совета, как лучше с ним работать]\n\nСЛЕДУЮЩИЙ ШАГ:\n[предложи конкретное действие для менеджера]\n---\n\nСделай комментарий структурированным и практичным.",
+        "text": "Комментарий по клиенту:\n\nТИП: {{ $('AI Agent 8 - Client Type').item.json.output }}\n\nАНАЛИЗ: {{ $('AI Agent 7 - Client Analysis').item.json.output }}\n\nРЕКОМЕНДАЦИИ (2-3):\nСЛЕДУЮЩИЙ ШАГ:",
         "options": {
-          "systemMessage": "Ты создаёшь комментарии по клиентам для CRM. Давай практичные рекомендации по работе с клиентом."
+          "systemMessage": "Комментарии для CRM."
         }
       },
       "id": "ai-agent-9-client-comment",
-      "name": "AI Agent 9 - Client Bitrix Comment",
+      "name": "AI Agent 9 - Client Comment",
       "type": "@n8n/n8n-nodes-langchain.agent",
       "typeVersion": 2,
-      "position": [4840, 100],
+      "position": [5940, 0],
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 5000
@@ -761,15 +918,14 @@
         "options": {
           "model": "gpt-4-turbo",
           "temperature": 0.2,
-          "maxTokens": 2000,
-          "topP": 1
+          "maxTokens": 2000
         }
       },
       "id": "openai-model-9",
       "name": "OpenAI Model 9",
       "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
       "typeVersion": 1.2,
-      "position": [4860, 320],
+      "position": [5960, 220],
       "credentials": {
         "openAiApi": {
           "id": "OPENAI_CREDENTIAL_ID",
@@ -780,16 +936,16 @@
     {
       "parameters": {
         "promptType": "define",
-        "text": "Ты — маркетолог компании по продаже металлопроката.\n\nПроанализируй звонок и выдели информацию для контент-маркетинга:\n\n1. БОЛИ КЛИЕНТА (2-3 проблемы):\n   - Что беспокоит клиента?\n   - Какие трудности он упоминал?\n\n2. ВОПРОСЫ КЛИЕНТА (3-5 вопросов):\n   - Какие вопросы задавал клиент?\n   - О чём хотел узнать?\n\n3. ИСТОРИИ/СИТУАЦИИ:\n   - Личные истории клиента (если были)\n   - Конкретные кейсы и примеры\n   - Факапы или проблемы с предыдущими поставщиками\n\n4. ИДЕИ ДЛЯ КОНТЕНТА (5 идей):\n   - Идеи для постов/видео/сторис на основе этого звонка\n   - Темы, которые будут интересны подобным клиентам\n\nТранскрибация:\n{{ $('Save Clean Transcription').item.json.clean_transcript }}",
+        "text": "Маркетолог металлопроката.\n\nВыдели:\n\n1. БОЛИ (2-3)\n2. ВОПРОСЫ (3-5)\n3. ИСТОРИИ\n4. ИДЕИ КОНТЕНТА (5)\n\nТранскрибация:\n{{ $('Save Clean Transcription').item.json.output }}",
         "options": {
-          "systemMessage": "Ты — маркетолог компании по продаже металлопроката. Анализируй звонки для создания контент-плана: боли, вопросы, истории, идеи."
+          "systemMessage": "Маркетолог."
         }
       },
       "id": "ai-agent-10-marketing",
-      "name": "AI Agent 10 - Marketing Ideas",
+      "name": "AI Agent 10 - Marketing",
       "type": "@n8n/n8n-nodes-langchain.agent",
       "typeVersion": 2,
-      "position": [5060, 100],
+      "position": [6160, 0],
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 5000
@@ -799,15 +955,14 @@
         "options": {
           "model": "gpt-4-turbo",
           "temperature": 0.3,
-          "maxTokens": 3000,
-          "topP": 1
+          "maxTokens": 3000
         }
       },
       "id": "openai-model-10",
       "name": "OpenAI Model 10",
       "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
       "typeVersion": 1.2,
-      "position": [5080, 320],
+      "position": [6180, 220],
       "credentials": {
         "openAiApi": {
           "id": "OPENAI_CREDENTIAL_ID",
@@ -817,158 +972,37 @@
     },
     {
       "parameters": {
-        "assignments": {
-          "assignments": [
-            {
-              "id": "merge-call-id",
-              "name": "call_id",
-              "value": "={{ $('Extract Transcription Data').item.json.call_id }}",
-              "type": "string"
-            },
-            {
-              "id": "merge-lead-id",
-              "name": "lead_id",
-              "value": "={{ $('Extract Transcription Data').item.json.lead_id }}",
-              "type": "string"
-            },
-            {
-              "id": "merge-deal-id",
-              "name": "deal_id",
-              "value": "={{ $('Extract Transcription Data').item.json.deal_id }}",
-              "type": "string"
-            },
-            {
-              "id": "merge-seller-part1",
-              "name": "seller_part1",
-              "value": "={{ $('AI Agent 1 - Manager Part 1').item.json.output }}",
-              "type": "string"
-            },
-            {
-              "id": "merge-seller-part2",
-              "name": "seller_part2",
-              "value": "={{ $('AI Agent 2 - Manager Part 2').item.json.output }}",
-              "type": "string"
-            },
-            {
-              "id": "merge-seller-part3",
-              "name": "seller_part3",
-              "value": "={{ $('AI Agent 3 - Manager Part 3').item.json.output }}",
-              "type": "string"
-            },
-            {
-              "id": "merge-seller-score",
-              "name": "seller_score_total",
-              "value": "={{ $('AI Agent 4 - Calculate Score').item.json.output }}",
-              "type": "string"
-            },
-            {
-              "id": "merge-seller-recommendations",
-              "name": "seller_recommendations",
-              "value": "={{ $('AI Agent 5 - Recommendations').item.json.output }}",
-              "type": "string"
-            },
-            {
-              "id": "merge-seller-comment",
-              "name": "seller_comment",
-              "value": "={{ $('AI Agent 6 - Manager Bitrix Comment').item.json.output }}",
-              "type": "string"
-            },
-            {
-              "id": "merge-client-analysis",
-              "name": "client_analysis",
-              "value": "={{ $('AI Agent 7 - Client Analysis').item.json.output }}",
-              "type": "string"
-            },
-            {
-              "id": "merge-client-type",
-              "name": "client_type",
-              "value": "={{ $('AI Agent 8 - Client Type').item.json.output }}",
-              "type": "string"
-            },
-            {
-              "id": "merge-client-comment",
-              "name": "client_comment",
-              "value": "={{ $('AI Agent 9 - Client Bitrix Comment').item.json.output }}",
-              "type": "string"
-            },
-            {
-              "id": "merge-marketing",
-              "name": "marketing_ideas",
-              "value": "={{ $('AI Agent 10 - Marketing Ideas').item.json.output }}",
-              "type": "string"
-            }
-          ]
-        },
-        "options": {}
-      },
-      "id": "set-merge-results",
-      "name": "Merge All Results",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
-      "position": [5280, 100]
-    },
-    {
-      "parameters": {
         "operation": "update",
         "tableId": "calls_analysis",
-        "matchingColumns": ["id"],
+        "matchingColumns": ["call_id"],
         "columns": {
           "mappingMode": "defineBelow",
           "value": {
-            "seller_part1": "={{ $json.seller_part1 }}",
-            "seller_part2": "={{ $json.seller_part2 }}",
-            "seller_part3": "={{ $json.seller_part3 }}",
-            "seller_score_total": "={{ parseInt($json.seller_score_total.match(/\\d+/)?.[0]) || 0 }}",
-            "seller_recommendations": "={{ $json.seller_recommendations }}",
-            "seller_comment": "={{ $json.seller_comment }}",
-            "client_analysis": "={{ $json.client_analysis }}",
-            "client_type": "={{ $json.client_type.match(/горячий|тёплый|холодный/i)?.[0] || 'холодный' }}",
-            "client_comment": "={{ $json.client_comment }}",
-            "marketing_ideas": "={{ $json.marketing_ideas }}",
+            "seller_part1": "={{ $('AI Agent 1 - Manager Part 1').item.json.output }}",
+            "seller_part2": "={{ $('AI Agent 2 - Manager Part 2').item.json.output }}",
+            "seller_part3": "={{ $('AI Agent 3 - Manager Part 3').item.json.output }}",
+            "seller_score_total": "={{ parseInt($('AI Agent 4 - Score').item.json.output.match(/\\d+/)?.[0]) || 0 }}",
+            "seller_recommendations": "={{ $('AI Agent 5 - Recommendations').item.json.output }}",
+            "seller_comment": "={{ $('AI Agent 6 - Manager Comment').item.json.output }}",
+            "client_analysis": "={{ $('AI Agent 7 - Client Analysis').item.json.output }}",
+            "client_type": "={{ $('AI Agent 8 - Client Type').item.json.output.match(/горячий|тёплый|холодный/i)?.[0] || 'холодный' }}",
+            "client_comment": "={{ $('AI Agent 9 - Client Comment').item.json.output }}",
+            "marketing_ideas": "={{ $('AI Agent 10 - Marketing').item.json.output }}",
             "analysis_complete": true
           }
         }
       },
-      "id": "supabase-save-all-results",
-      "name": "Save All Results to Supabase",
+      "id": "supabase-save-all",
+      "name": "Save All Results",
       "type": "n8n-nodes-base.supabase",
       "typeVersion": 1,
-      "position": [5500, 100],
+      "position": [6380, 0],
       "credentials": {
         "supabaseApi": {
           "id": "SUPABASE_CREDENTIAL_ID",
           "name": "Supabase API"
         }
       }
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict"
-          },
-          "conditions": [
-            {
-              "id": "condition-has-lead",
-              "leftValue": "={{ $json.lead_id }}",
-              "rightValue": "",
-              "operator": {
-                "type": "string",
-                "operation": "notEmpty"
-              }
-            }
-          ],
-          "combinator": "or"
-        },
-        "options": {}
-      },
-      "id": "if-has-bitrix-id",
-      "name": "Has Bitrix ID?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [5720, 100]
     },
     {
       "parameters": {
@@ -978,16 +1012,16 @@
         "nodeCredentialType": "httpQueryAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"id\": {{ $json.lead_id }},\n  \"fields\": {\n    \"UF_CRM_CALL_SCORE\": {{ parseInt($json.seller_score_total.match(/\\d+/)?.[0]) || 0 }},\n    \"UF_CRM_CLIENT_TYPE\": \"{{ $json.client_type.match(/горячий|тёплый|холодный/i)?.[0] || 'холодный' }}\"\n  }\n}",
+        "jsonBody": "={\n  \"id\": {{ $('Extract Transcription Data').item.json.lead_id }},\n  \"fields\": {\n    \"UF_CRM_CALL_SCORE\": {{ parseInt($('AI Agent 4 - Score').item.json.output.match(/\\d+/)?.[0]) || 0 }},\n    \"UF_CRM_CLIENT_TYPE\": \"{{ $('AI Agent 8 - Client Type').item.json.output.match(/горячий|тёплый|холодный/i)?.[0] || 'холодный' }}\"\n  }\n}",
         "options": {
           "timeout": 15000
         }
       },
       "id": "bitrix-update-lead",
-      "name": "Bitrix24 Update Lead Fields",
+      "name": "Bitrix24 Update Lead",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [5940, 0],
+      "position": [6600, 0],
       "credentials": {
         "httpQueryAuth": {
           "id": "BITRIX24_CREDENTIAL_ID",
@@ -1006,16 +1040,16 @@
         "nodeCredentialType": "httpQueryAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"fields\": {\n    \"ENTITY_ID\": {{ $json.lead_id }},\n    \"ENTITY_TYPE\": \"lead\",\n    \"COMMENT\": {{ JSON.stringify($json.seller_comment) }}\n  }\n}",
+        "jsonBody": "={\n  \"fields\": {\n    \"ENTITY_ID\": {{ $('Extract Transcription Data').item.json.lead_id }},\n    \"ENTITY_TYPE\": \"lead\",\n    \"COMMENT\": {{ JSON.stringify($('AI Agent 6 - Manager Comment').item.json.output) }}\n  }\n}",
         "options": {
           "timeout": 15000
         }
       },
       "id": "bitrix-add-manager-comment",
-      "name": "Bitrix24 Add Manager Comment",
+      "name": "Bitrix24 Manager Comment",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [6160, 0],
+      "position": [6820, 0],
       "credentials": {
         "httpQueryAuth": {
           "id": "BITRIX24_CREDENTIAL_ID",
@@ -1034,16 +1068,16 @@
         "nodeCredentialType": "httpQueryAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"fields\": {\n    \"ENTITY_ID\": {{ $json.lead_id }},\n    \"ENTITY_TYPE\": \"lead\",\n    \"COMMENT\": {{ JSON.stringify($json.client_comment) }}\n  }\n}",
+        "jsonBody": "={\n  \"fields\": {\n    \"ENTITY_ID\": {{ $('Extract Transcription Data').item.json.lead_id }},\n    \"ENTITY_TYPE\": \"lead\",\n    \"COMMENT\": {{ JSON.stringify($('AI Agent 9 - Client Comment').item.json.output) }}\n  }\n}",
         "options": {
           "timeout": 15000
         }
       },
       "id": "bitrix-add-client-comment",
-      "name": "Bitrix24 Add Client Comment",
+      "name": "Bitrix24 Client Comment",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [6380, 0],
+      "position": [7040, 0],
       "credentials": {
         "httpQueryAuth": {
           "id": "BITRIX24_CREDENTIAL_ID",
@@ -1058,7 +1092,7 @@
       "parameters": {
         "operation": "update",
         "tableId": "calls_analysis",
-        "matchingColumns": ["id"],
+        "matchingColumns": ["call_id"],
         "columns": {
           "mappingMode": "defineBelow",
           "value": {
@@ -1067,10 +1101,10 @@
         }
       },
       "id": "supabase-set-bitrix-updated",
-      "name": "Set Bitrix Updated Flag",
+      "name": "Set Bitrix Updated",
       "type": "n8n-nodes-base.supabase",
       "typeVersion": 1,
-      "position": [6600, 0],
+      "position": [7260, 0],
       "credentials": {
         "supabaseApi": {
           "id": "SUPABASE_CREDENTIAL_ID",
@@ -1080,66 +1114,128 @@
     },
     {
       "parameters": {},
-      "id": "no-op-end",
-      "name": "No Operation (End)",
+      "id": "no-op",
+      "name": "End",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
-      "position": [660, 400]
+      "position": [440, 400]
     }
   ],
   "connections": {
-    "Schedule Trigger": {
+    "Bitrix24 Call Webhook": {
       "main": [
         [
           {
-            "node": "Get Pending Calls",
+            "node": "Is Call End Event?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Get Pending Calls": {
+    "Is Call End Event?": {
       "main": [
         [
           {
-            "node": "Has Data?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Has Data?": {
-      "main": [
-        [
-          {
-            "node": "Loop Over Items",
+            "node": "Extract Webhook Data",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "No Operation (End)",
+            "node": "End",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Loop Over Items": {
+    "Extract Webhook Data": {
       "main": [
         [
           {
-            "node": "Set Status Processing",
+            "node": "Limit to 5 Records",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Set Status Processing": {
+    "Limit to 5 Records": {
+      "main": [
+        [
+          {
+            "node": "Has Record File ID?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Record File ID?": {
+      "main": [
+        [
+          {
+            "node": "Bitrix24 Get File Info",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Limit to 5 Records",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bitrix24 Get File Info": {
+      "main": [
+        [
+          {
+            "node": "Download Call Recording",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Call Recording": {
+      "main": [
+        [
+          {
+            "node": "Upload to Supabase Storage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload to Supabase Storage": {
+      "main": [
+        [
+          {
+            "node": "Prepare Supabase Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Supabase Data": {
+      "main": [
+        [
+          {
+            "node": "Create Call Record in Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Call Record in Supabase": {
       "main": [
         [
           {
@@ -1344,7 +1440,7 @@
       "main": [
         [
           {
-            "node": "AI Agent 4 - Calculate Score",
+            "node": "AI Agent 4 - Score",
             "type": "main",
             "index": 0
           }
@@ -1355,14 +1451,14 @@
       "ai_languageModel": [
         [
           {
-            "node": "AI Agent 4 - Calculate Score",
+            "node": "AI Agent 4 - Score",
             "type": "ai_languageModel",
             "index": 0
           }
         ]
       ]
     },
-    "AI Agent 4 - Calculate Score": {
+    "AI Agent 4 - Score": {
       "main": [
         [
           {
@@ -1388,7 +1484,7 @@
       "main": [
         [
           {
-            "node": "AI Agent 6 - Manager Bitrix Comment",
+            "node": "AI Agent 6 - Manager Comment",
             "type": "main",
             "index": 0
           }
@@ -1399,14 +1495,14 @@
       "ai_languageModel": [
         [
           {
-            "node": "AI Agent 6 - Manager Bitrix Comment",
+            "node": "AI Agent 6 - Manager Comment",
             "type": "ai_languageModel",
             "index": 0
           }
         ]
       ]
     },
-    "AI Agent 6 - Manager Bitrix Comment": {
+    "AI Agent 6 - Manager Comment": {
       "main": [
         [
           {
@@ -1454,7 +1550,7 @@
       "main": [
         [
           {
-            "node": "AI Agent 9 - Client Bitrix Comment",
+            "node": "AI Agent 9 - Client Comment",
             "type": "main",
             "index": 0
           }
@@ -1465,18 +1561,18 @@
       "ai_languageModel": [
         [
           {
-            "node": "AI Agent 9 - Client Bitrix Comment",
+            "node": "AI Agent 9 - Client Comment",
             "type": "ai_languageModel",
             "index": 0
           }
         ]
       ]
     },
-    "AI Agent 9 - Client Bitrix Comment": {
+    "AI Agent 9 - Client Comment": {
       "main": [
         [
           {
-            "node": "AI Agent 10 - Marketing Ideas",
+            "node": "AI Agent 10 - Marketing",
             "type": "main",
             "index": 0
           }
@@ -1487,102 +1583,73 @@
       "ai_languageModel": [
         [
           {
-            "node": "AI Agent 10 - Marketing Ideas",
+            "node": "AI Agent 10 - Marketing",
             "type": "ai_languageModel",
             "index": 0
           }
         ]
       ]
     },
-    "AI Agent 10 - Marketing Ideas": {
+    "AI Agent 10 - Marketing": {
       "main": [
         [
           {
-            "node": "Merge All Results",
+            "node": "Save All Results",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Merge All Results": {
+    "Save All Results": {
       "main": [
         [
           {
-            "node": "Save All Results to Supabase",
+            "node": "Bitrix24 Update Lead",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Save All Results to Supabase": {
+    "Bitrix24 Update Lead": {
       "main": [
         [
           {
-            "node": "Has Bitrix ID?",
+            "node": "Bitrix24 Manager Comment",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Has Bitrix ID?": {
+    "Bitrix24 Manager Comment": {
       "main": [
         [
           {
-            "node": "Bitrix24 Update Lead Fields",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Loop Over Items",
+            "node": "Bitrix24 Client Comment",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Bitrix24 Update Lead Fields": {
+    "Bitrix24 Client Comment": {
       "main": [
         [
           {
-            "node": "Bitrix24 Add Manager Comment",
+            "node": "Set Bitrix Updated",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Bitrix24 Add Manager Comment": {
+    "Set Bitrix Updated": {
       "main": [
         [
           {
-            "node": "Bitrix24 Add Client Comment",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Bitrix24 Add Client Comment": {
-      "main": [
-        [
-          {
-            "node": "Set Bitrix Updated Flag",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Set Bitrix Updated Flag": {
-      "main": [
-        [
-          {
-            "node": "Loop Over Items",
+            "node": "Limit to 5 Records",
             "type": "main",
             "index": 0
           }
@@ -1593,18 +1660,15 @@
   "settings": {
     "executionOrder": "v1",
     "saveManualExecutions": true,
-    "callerPolicy": "workflowsFromSameOwner",
-    "errorWorkflow": ""
+    "callerPolicy": "workflowsFromSameOwner"
   },
   "staticData": null,
   "tags": [
     {
-      "name": "call-analysis",
-      "createdAt": "2024-01-01T00:00:00.000Z",
-      "updatedAt": "2024-01-01T00:00:00.000Z"
+      "name": "call-analysis-webhook"
     }
   ],
   "triggerCount": 1,
   "updatedAt": "2024-01-01T00:00:00.000Z",
-  "versionId": "1"
+  "versionId": "2"
 }

@@ -1,15 +1,34 @@
 # Настройка Bitrix24 для Call Analysis Workflow
 
-## 1. Создание Webhook
+## 1. Создание Входящего Webhook (для API запросов)
 
 1. Перейдите в **Приложения → Разработчикам → Другое → Входящий вебхук**
 2. Нажмите **Добавить вебхук**
 3. Выберите права:
    - `crm` - работа с CRM
    - `crm.timeline` - работа с таймлайном
+   - `disk` - доступ к файлам (для скачивания записей звонков)
 4. Скопируйте URL вебхука (формат: `https://your-portal.bitrix24.ru/rest/1/xxxxxx/`)
 
-## 2. Создание пользовательских полей
+## 2. Настройка Исходящего Webhook (для отправки событий в n8n)
+
+1. В n8n активируйте workflow → скопируйте **Production Webhook URL**
+   - Формат: `https://your-n8n.com/webhook/call-bitrix-incoming`
+2. Bitrix24 → **Настройки → Настройки телефонии → Интеграции**
+3. Или через REST API создайте обработчик события:
+
+```bash
+curl -X POST 'https://your-portal.bitrix24.ru/rest/1/xxxxxx/event.bind' \
+  -d 'event=ONVOXIMPLANTCALLEND' \
+  -d 'handler=https://your-n8n.com/webhook/call-bitrix-incoming' \
+  -d 'event_type=online'
+```
+
+**Альтернативный способ** (если нет доступа к настройкам телефонии):
+- Используйте сторонний сервис для webhook (например, Zapier, Make.com)
+- Или настройте через администратора Bitrix24
+
+## 3. Создание пользовательских полей
 
 ### Поле: Оценка звонка (UF_CRM_CALL_SCORE)
 
@@ -41,7 +60,29 @@
 **Для сделок:**
 Повторите те же шаги для сущности **Сделка**.
 
-## 3. Настройка в n8n
+## 4. Формат webhook от Bitrix24
+
+Когда звонок завершается, Bitrix24 отправляет POST запрос на ваш URL:
+
+```json
+{
+  "event": "ONVOXIMPLANTCALLEND",
+  "data": {
+    "CALL_ID": "call.12345.67890",
+    "CRM_ENTITY_TYPE": "LEAD",
+    "CRM_ENTITY_ID": "123",
+    "RECORD_FILE_ID": "789",
+    "DURATION": 120,
+    "PHONE_NUMBER": "+79001234567"
+  },
+  "ts": "1234567890",
+  "auth": {
+    "domain": "your-portal.bitrix24.ru"
+  }
+}
+```
+
+## 5. Настройка в n8n
 
 ### HTTP Query Auth Credential
 
@@ -63,7 +104,7 @@ URL формируется как:
 ={{ $credentials.bitrix24Webhook }}crm.lead.update
 ```
 
-## 4. API методы
+## 6. API методы
 
 ### Обновление полей лида
 ```json
@@ -101,7 +142,7 @@ POST crm.timeline.comment.add
 }
 ```
 
-## 5. Проверка работы
+## 7. Проверка работы
 
 1. Создайте тестовый лид в Bitrix24
 2. Добавьте запись в Supabase с `lead_id` этого лида
@@ -110,7 +151,18 @@ POST crm.timeline.comment.add
    - Поля лида обновились
    - В таймлайне появились комментарии
 
-## 6. Troubleshooting
+## 8. Troubleshooting
+
+### Webhook не приходит
+- Проверьте URL webhook в настройках Bitrix24
+- Убедитесь, что workflow активирован в n8n
+- Проверьте логи webhook в n8n (Executions)
+
+### Ошибка при скачивании записи
+- Проверьте права входящего webhook на `disk`
+- Убедитесь, что запись звонка существует
+
+## 9. Старые проблемы
 
 ### Ошибка 403 Forbidden
 - Проверьте права вебхука
@@ -124,7 +176,7 @@ POST crm.timeline.comment.add
 - Проверьте права на `crm.timeline`
 - Убедитесь, что `ENTITY_TYPE` правильный
 
-## 7. Получение символьных кодов полей
+## 10. Получение символьных кодов полей
 
 Если поля уже созданы, получите их коды через API:
 

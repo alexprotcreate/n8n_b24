@@ -1,26 +1,38 @@
-# n8n Call Analysis Workflow - AssemblyAI + GPT + Bitrix24
+# n8n Call Analysis Workflow - AssemblyAI + GPT + Bitrix24 (Webhook)
 
-Автоматический анализ звонков менеджеров по продаже металлопроката.
+Автоматический анализ звонков менеджеров по продаже металлопроката через webhook Bitrix24.
 
 ## Что делает workflow
 
-1. **Транскрибирует звонки** через AssemblyAI (speaker diarization)
-2. **Очищает транскрибацию** (убирает ошибки, разделяет Менеджер/Клиент)
-3. **Анализирует работу менеджера** по чек-листу (баллы 0-100)
-4. **Классифицирует клиента** (горячий/тёплый/холодный)
-5. **Генерирует рекомендации** для менеджеров
-6. **Записывает в Bitrix24** (поля лида + комментарии)
-7. **Сохраняет идеи контента** в Supabase
+1. **Принимает webhook** от Bitrix24 при завершении звонка (ONVOXIMPLANTCALLEND)
+2. **Скачивает запись звонка** из Bitrix24
+3. **Загружает в Supabase Storage** для публичного доступа
+4. **Транскрибирует через AssemblyAI** (speaker diarization на русском)
+5. **Очищает транскрибацию** (убирает ошибки, разделяет Менеджер/Клиент)
+6. **Анализирует работу менеджера** по чек-листу (баллы 0-100)
+7. **Классифицирует клиента** (горячий/тёплый/холодный)
+8. **Генерирует рекомендации** для менеджеров
+9. **Записывает в Bitrix24** (поля лида + комментарии в тот же лид)
+10. **Сохраняет идеи контента** в Supabase
+
+**Ограничения**: Обрабатывает не более 5 записей звонков за раз.
 
 ## Быстрый старт
 
-### 1. Импорт workflow
+### 1. Создание bucket в Supabase Storage
+
+1. Откройте Supabase → Storage
+2. Создайте новый bucket: `call-recordings`
+3. Настройте публичный доступ:
+   - Policies → New Policy → Allow public read access
+
+### 2. Импорт workflow
 
 1. Откройте n8n
 2. Перейдите в Workflows → Import from File
 3. Выберите файл `workflow.json`
 
-### 2. Настройка Credentials
+### 3. Настройка Credentials
 
 #### AssemblyAI API
 1. Settings → Credentials → Add Credential
@@ -43,17 +55,27 @@
 2. Name: `bitrix24Webhook`
 3. Value: `https://ваш-портал.bitrix24.ru/rest/1/xxxxxx/`
 
-### 3. Создание таблицы Supabase
+### 4. Создание таблицы Supabase
 
 Выполните SQL из `docs/supabase_schema.sql` в Supabase SQL Editor.
 
-### 4. Настройка Bitrix24
+### 5. Настройка Bitrix24
 
 Создайте пользовательские поля (см. `docs/bitrix24_setup.md`):
 - `UF_CRM_CALL_SCORE` (число) - оценка звонка
 - `UF_CRM_CLIENT_TYPE` (строка) - тип клиента
 
-### 5. Замена ID Credentials
+### 6. Настройка webhook в Bitrix24
+
+1. В n8n активируйте workflow → скопируйте Production Webhook URL
+2. Bitrix24 → Настройки → Настройки REST API → Исходящие вебхуки
+3. Создайте вебхук:
+   - Название: `Call Analysis Webhook`
+   - URL: `https://your-n8n.com/webhook/call-bitrix-incoming`
+   - Событие: `ONVOXIMPLANTCALLEND`
+   - Метод: POST
+
+### 7. Замена ID Credentials
 
 В workflow.json замените:
 - `SUPABASE_CREDENTIAL_ID` → ID вашего Supabase credential
@@ -61,29 +83,38 @@
 - `OPENAI_CREDENTIAL_ID` → ID OpenAI credential
 - `BITRIX24_CREDENTIAL_ID` → ID Bitrix24 credential
 
-### 6. Тестирование
+### 8. Тестирование
 
-1. Добавьте тестовую запись в Supabase:
-```sql
-INSERT INTO calls_analysis (call_id, audio_url, lead_id)
-VALUES ('test-001', 'https://example.com/test-audio.mp3', '123');
-```
-
-2. Запустите workflow вручную
-3. Проверьте результаты в Supabase и Bitrix24
+1. Сделайте тестовый звонок через Bitrix24 (с записью)
+2. После завершения звонка webhook автоматически запустит workflow
+3. Проверьте:
+   - Production Webhook URL получил запрос
+   - Файл загрузился в Supabase Storage (`call-recordings` bucket)
+   - Запись создана в таблице `calls_analysis`
+   - Транскрибация получена от AssemblyAI
+   - Результаты анализа в Supabase
+   - Комментарии добавлены в Bitrix24 лид
 
 ## Структура workflow
 
 ```
-Schedule Trigger (каждые 3 мин)
+Bitrix24 Webhook (ONVOXIMPLANTCALLEND)
     ↓
-Get Pending Calls (Supabase)
+Extract Webhook Data (call_id, lead_id, record_file_id)
     ↓
-Loop Over Items
+Limit to 5 Records (batch processing)
+    ↓
+Bitrix24 Get File Info (disk.file.get)
+    ↓
+Download Call Recording (HTTP GET)
+    ↓
+Upload to Supabase Storage (публичный URL)
+    ↓
+Create Call Record in Supabase
     ↓
 AssemblyAI Start Transcription
     ↓
-Wait + Check Status (polling)
+Wait 10s + Check Status (polling)
     ↓
 Extract Transcription Data
     ↓
@@ -103,7 +134,7 @@ AI Agent 10: Marketing Ideas
     ↓
 Save to Supabase
     ↓
-Update Bitrix24 (fields + comments)
+Update Bitrix24 (fields + comments в тот же лид)
 ```
 
 ## Система оценки менеджера (100 баллов)
